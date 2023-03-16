@@ -1,0 +1,110 @@
+#############################
+# P R E L I M I N A R I E S #
+#############################
+
+variable r uloop 100000
+
+variable N equal 100
+
+variable num equal 10000
+variable strs equal 500
+variable l0 equal (19+ceil(${r}/${num})*2)    
+variable l1 equal (60.5)
+variable lA equal (${l0}-0.5)   # When the A basin is returned to
+
+variable vrand equal (73455+abs(363+ceil(8.062*${r}+1.8)))
+variable trand equal (8352+abs(1096+round(5.51*${r}*cos(3.085*${r})+26.9)))
+
+variable qcuto equal (1.432)
+
+variable rstrt equal (abs(floor(7.952*${r}*cos(5.3634*${r})))%${strs}+1)
+
+log tmp.log
+
+units lj                  # Use reduced LJ style units
+atom_style atomic         # Uncharged point particles
+atom_modify map hash      # Needed for indexing of clusters etc
+                          # Used to be able to find where atoms are in relation to each other.
+shell cd seed_${l0}
+
+read_restart 4k_restart_${l0}_${rstrt}.equil
+
+# Set the mass of the first (and only) atom type.
+mass 1 1.0
+
+reset_timestep 0
+timestep 0.002   # simulation timestep
+
+
+# Lennard-Jones interactions between particles, 3.5 sigma cut-off. Apply
+# long range tail corrections to energy and pressure and set all coefficients
+# to unity since we work in reduced units here. Note that this doesn't shift
+# the potential such that it goes to zero at the cutoff. That would require
+# pair_modify('shift', 'yes').
+#pair_style lj/cut/gpu  3.5  # GPU version
+pair_style lj/cut  3.5      # non-GPU version
+pair_modify shift yes
+pair_coeff 1  1  1.0  1.0   # Intearaction between 1 and 1 set with epsilon = 1 and sigma = 1
+
+#################################
+#   F R E E Z E   S Y S T E M   #
+#################################
+
+velocity all create ${temp} ${vrand} mom yes dist gaussian # Assign velocities
+     
+
+# Define solid atoms. This closely follows ten Wolde  Ruiz-Montero and Frenkel  Faraday Discuss  1996  104  93-110
+# Compute components of the per-atom q6 vector
+compute q6 all orientorder/atom degrees 1 6 components 6 nnn NULL cutoff ${qcuto} # compute the Q6 parameter.
+                                                                             # Use all neighbours within 1.3 unit cell.
+
+# get number of connections
+compute coord_number all coord/atom orientorder q6 0.5
+
+# An atom is solid if it has 8 or more connections (of a possible 14)
+variable is_solid atom c_coord_number>=8
+group solid dynamic all var is_solid every ${N}   # Must be dynamic to update
+
+# do clustering
+compute cluster solid cluster/atom ${qcuto} # Create a cluster where all atoms within are solid and max 1.3 units from another member
+
+# define chunks one chunk per cluster
+compute clus_chunks solid chunk/atom c_cluster nchunk every compress yes  # Says which atoms are in which chunk
+
+# count the size of each chunk
+compute size_chunks solid property/chunk clus_chunks count
+
+
+# Find the maximum entry in the vector of chunk sizes
+variable max_n equal max(c_size_chunks)
+
+# Thermo style which includes this variable
+thermo_style custom step temp pe vol v_max_n
+
+thermo ${N}  # Print the thermo information every 100 steps
+
+# Reset the npt fix at a lower temperature (below freezing)
+fix t1 all nph iso 5.68 5.68 0.5 mtk yes pchain 5 # Use NPT ensemble
+fix t2 all temp/csvr ${temp} ${temp} 0.05 ${trand}
+
+
+fix over all halt ${N} v_max_n > ${l1} error soft message no
+fix under all halt ${N} v_max_n < ${lA} error soft message no
+
+run 10000000 # Run for this many steps
+
+variable hlp equal (step)
+
+if "${max_n} > ${l1}" then &
+   "print '1 ${hlp}' append 4k_${l0}_${lA}_runs_${l1}.txt" &
+elif "${max_n} < ${lA}" &
+   "print '0 ${hlp}' append 4k_${l0}_${lA}_runs_${l1}.txt" &
+else &
+   "print '# ${hlp}' append 4k_${l0}_${lA}_runs_${l1}.txt" 
+
+shell cd ../
+   
+clear
+next r
+jump SELF
+
