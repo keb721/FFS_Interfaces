@@ -264,7 +264,7 @@ def plottable_grs(results, keyword, pick_diff, Delta=False, pick_sims=None, pick
 
 
 def sizes_data(sizes_file):
-    ''' Return the count of sizes of solid clsuters in a simulation.'''
+    ''' Return the count of sizes of solid clusters in a simulation.'''
     
     data = np.genfromtxt(sizes_file, delimiter=',', skip_header=1)
     data = data.tolist()
